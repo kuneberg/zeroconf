@@ -18,12 +18,12 @@ import (
 
 const (
 	// Number of Multicast responses sent for a query message (default: 1 < x < 9)
-	multicastRepetitions = 2
+	DEFAULT_MULTICAST_REPRETITIONS = 2
 )
 
 // Register a service by given arguments. This call will take the system's hostname
 // and lookup IP by that hostname.
-func Register(instance, service, domain string, port int, text []string, ifaces []net.Interface) (*Server, error) {
+func Register(instance, service, domain string, port int, text []string, ifaces []net.Interface, multicastRepetitions int) (*Server, error) {
 	entry := NewServiceEntry(instance, service, domain)
 	entry.Port = port
 	entry.Text = text
@@ -67,7 +67,7 @@ func Register(instance, service, domain string, port int, text []string, ifaces 
 		return nil, fmt.Errorf("could not determine host IP addresses")
 	}
 
-	s, err := newServer(ifaces)
+	s, err := newServer(ifaces, multicastRepetitions)
 	if err != nil {
 		return nil, err
 	}
@@ -81,7 +81,7 @@ func Register(instance, service, domain string, port int, text []string, ifaces 
 
 // RegisterProxy registers a service proxy. This call will skip the hostname/IP lookup and
 // will use the provided values.
-func RegisterProxy(instance, service, domain string, port int, host string, ips []string, text []string, ifaces []net.Interface) (*Server, error) {
+func RegisterProxy(instance, service, domain string, port int, host string, ips []string, text []string, ifaces []net.Interface, multicastRepetitions int) (*Server, error) {
 	entry := NewServiceEntry(instance, service, domain)
 	entry.Port = port
 	entry.Text = text
@@ -124,7 +124,7 @@ func RegisterProxy(instance, service, domain string, port int, host string, ips 
 		ifaces = listMulticastInterfaces()
 	}
 
-	s, err := newServer(ifaces)
+	s, err := newServer(ifaces, multicastRepetitions)
 	if err != nil {
 		return nil, err
 	}
@@ -147,15 +147,16 @@ type Server struct {
 	ipv6conn *ipv6.PacketConn
 	ifaces   []net.Interface
 
-	shouldShutdown chan struct{}
-	shutdownLock   sync.Mutex
-	shutdownEnd    sync.WaitGroup
-	isShutdown     bool
-	ttl            uint32
+	shouldShutdown       chan struct{}
+	shutdownLock         sync.Mutex
+	shutdownEnd          sync.WaitGroup
+	isShutdown           bool
+	ttl                  uint32
+	multicastRepetitions int
 }
 
 // Constructs server structure
-func newServer(ifaces []net.Interface) (*Server, error) {
+func newServer(ifaces []net.Interface, multicastRepetitions int) (*Server, error) {
 	ipv4conn, err4 := joinUdp4Multicast(ifaces)
 	if err4 != nil {
 		log.Printf("[zeroconf] no suitable IPv4 interface: %s", err4.Error())
@@ -170,11 +171,12 @@ func newServer(ifaces []net.Interface) (*Server, error) {
 	}
 
 	s := &Server{
-		ipv4conn:       ipv4conn,
-		ipv6conn:       ipv6conn,
-		ifaces:         ifaces,
-		ttl:            3200,
-		shouldShutdown: make(chan struct{}),
+		ipv4conn:             ipv4conn,
+		ipv6conn:             ipv6conn,
+		ifaces:               ifaces,
+		ttl:                  3200,
+		shouldShutdown:       make(chan struct{}),
+		multicastRepetitions: multicastRepetitions,
 	}
 
 	return s, nil
@@ -555,7 +557,7 @@ func (s *Server) probe() {
 
 	randomizer := rand.New(rand.NewSource(time.Now().UnixNano()))
 
-	for i := 0; i < multicastRepetitions; i++ {
+	for i := 0; i < s.multicastRepetitions; i++ {
 		if err := s.multicastResponse(q, 0); err != nil {
 			log.Println("[ERR] zeroconf: failed to send probe:", err.Error())
 		}
@@ -569,7 +571,7 @@ func (s *Server) probe() {
 	//    provided that the interval between unsolicited responses increases by
 	//    at least a factor of two with every response sent.
 	timeout := 1 * time.Second
-	for i := 0; i < multicastRepetitions; i++ {
+	for i := 0; i < s.multicastRepetitions; i++ {
 		for _, intf := range s.ifaces {
 			resp := new(dns.Msg)
 			resp.MsgHdr.Response = true
