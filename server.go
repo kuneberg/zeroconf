@@ -585,7 +585,11 @@ func (s *Server) probe() {
 			}
 		}
 		time.Sleep(timeout)
-		timeout *= 2
+		if timeout > 7 {
+			timeout = 7
+		} else {
+			timeout *= 2
+		}
 	}
 }
 
